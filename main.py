@@ -1,11 +1,14 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
+import os
 import sqlite3
-
+import psycopg
+from psycopg.rows import dict_row
 
 app = FastAPI()
 
-DATABASE = "water_level.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
+SQLITE_DATABASE = "water_level.db"
 
 
 # -----------------------------
@@ -24,32 +27,57 @@ class Telemetry(BaseModel):
 
 
 # -----------------------------
+# Database connection
+# -----------------------------
+def get_connection():
+    if DATABASE_URL:
+        return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+    return sqlite3.connect(SQLITE_DATABASE)
+
+
+# -----------------------------
 # Create database/table
 # -----------------------------
 def init_database():
-    connection = sqlite3.connect(DATABASE)
+    connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS telemetry (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            train_id TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            latitude REAL NOT NULL,
-            longitude REAL NOT NULL,
-            level_mm REAL NOT NULL,
-            level_percent REAL NOT NULL,
-            loop_current_ma REAL NOT NULL,
-            pressure_hpa REAL NOT NULL,
-            temperature_c REAL NOT NULL
-        )
-    """)
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS telemetry (
+                id BIGSERIAL PRIMARY KEY,
+                train_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                latitude DOUBLE PRECISION NOT NULL,
+                longitude DOUBLE PRECISION NOT NULL,
+                level_mm DOUBLE PRECISION NOT NULL,
+                level_percent DOUBLE PRECISION NOT NULL,
+                loop_current_ma DOUBLE PRECISION NOT NULL,
+                pressure_hpa DOUBLE PRECISION NOT NULL,
+                temperature_c DOUBLE PRECISION NOT NULL
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS telemetry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                train_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                latitude REAL NOT NULL,
+                longitude REAL NOT NULL,
+                level_mm REAL NOT NULL,
+                level_percent REAL NOT NULL,
+                loop_current_ma REAL NOT NULL,
+                pressure_hpa REAL NOT NULL,
+                temperature_c REAL NOT NULL
+            )
+        """)
 
     connection.commit()
     connection.close()
 
 
-# Create database when API starts
 @app.on_event("startup")
 def startup():
     init_database()
@@ -60,9 +88,7 @@ def startup():
 # -----------------------------
 @app.get("/")
 def home():
-    return {
-        "message": "Water Level API is running"
-    }
+    return {"message": "Water Level API is running"}
 
 
 # -----------------------------
@@ -70,23 +96,22 @@ def home():
 # -----------------------------
 @app.post("/api/v1/telemetry")
 def receive_telemetry(data: Telemetry):
-
-    connection = sqlite3.connect(DATABASE)
+    connection = get_connection()
     cursor = connection.cursor()
 
-    cursor.execute("""
+    placeholders = (
+        "%s, %s, %s, %s, %s, %s, %s, %s, %s"
+        if DATABASE_URL
+        else "?, ?, ?, ?, ?, ?, ?, ?, ?"
+    )
+
+    cursor.execute(f"""
         INSERT INTO telemetry (
-            train_id,
-            timestamp,
-            latitude,
-            longitude,
-            level_mm,
-            level_percent,
-            loop_current_ma,
-            pressure_hpa,
-            temperature_c
+            train_id, timestamp, latitude, longitude, level_mm,
+            level_percent, loop_current_ma, pressure_hpa, temperature_c
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES ({placeholders})
+        {"RETURNING id" if DATABASE_URL else ""}
     """, (
         data.train_id,
         data.timestamp,
@@ -99,10 +124,12 @@ def receive_telemetry(data: Telemetry):
         data.temperature_c
     ))
 
+    if DATABASE_URL:
+        record_id = cursor.fetchone()["id"]
+    else:
+        record_id = cursor.lastrowid
+
     connection.commit()
-
-    record_id = cursor.lastrowid
-
     connection.close()
 
     return {
@@ -117,29 +144,25 @@ def receive_telemetry(data: Telemetry):
 # -----------------------------
 @app.get("/api/v1/telemetry")
 def get_telemetry():
-
-    connection = sqlite3.connect(DATABASE)
-    connection.row_factory = sqlite3.Row
+    connection = get_connection()
     cursor = connection.cursor()
 
     cursor.execute("""
-        SELECT
-            id,
-            train_id,
-            timestamp,
-            latitude,
-            longitude,
-            level_mm,
-            level_percent,
-            loop_current_ma,
-            pressure_hpa,
-            temperature_c
+        SELECT id, train_id, timestamp, latitude, longitude, level_mm,
+               level_percent, loop_current_ma, pressure_hpa, temperature_c
         FROM telemetry
         ORDER BY id DESC
     """)
 
     records = cursor.fetchall()
-
     connection.close()
 
-    return [dict(record) for record in records]
+    if DATABASE_URL:
+        return records
+
+    return [dict(zip(
+        ["id", "train_id", "timestamp", "latitude", "longitude",
+         "level_mm", "level_percent", "loop_current_ma",
+         "pressure_hpa", "temperature_c"],
+        record
+    )) for record in records]
