@@ -1,3 +1,6 @@
+from typing import Optional
+
+
 from fastapi import FastAPI
 from pydantic import BaseModel
 import os
@@ -19,8 +22,8 @@ SQLITE_DATABASE = "water_level.db"
 class Telemetry(BaseModel):
     train_id: str
     timestamp: str
-    latitude: float
-    longitude: float
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     level_mm: float
     level_percent: float
     loop_current_ma: float
@@ -45,14 +48,20 @@ def init_database():
     connection = get_connection()
     cursor = connection.cursor()
 
+    cursor.execute("""
+    ALTER TABLE telemetry
+        ALTER COLUMN latitude DROP NOT NULL,
+        ALTER COLUMN longitude DROP NOT NULL
+        """)
+
     if DATABASE_URL:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS telemetry (
                 id BIGSERIAL PRIMARY KEY,
                 train_id TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
-                latitude DOUBLE PRECISION NOT NULL,
-                longitude DOUBLE PRECISION NOT NULL,
+                latitude DOUBLE PRECISION,
+                longitude DOUBLE PRECISION,
                 level_mm DOUBLE PRECISION NOT NULL,
                 level_percent DOUBLE PRECISION NOT NULL,
                 loop_current_ma DOUBLE PRECISION NOT NULL,
@@ -66,8 +75,8 @@ def init_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 train_id TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
-                latitude REAL NOT NULL,
-                longitude REAL NOT NULL,
+                latitude REAL,
+                longitude REAL,
                 level_mm REAL NOT NULL,
                 level_percent REAL NOT NULL,
                 loop_current_ma REAL NOT NULL,
