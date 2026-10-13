@@ -4,6 +4,8 @@ import os
 import sqlite3
 import psycopg
 from psycopg.rows import dict_row
+from fastapi.responses import FileResponse
+from pathlib import Path
 
 app = FastAPI()
 
@@ -166,3 +168,8 @@ def get_telemetry():
          "pressure_hpa", "temperature_c"],
         record
     )) for record in records]
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard():
+    html_path = Path(__file__).parent / "dashboard" / "dashboard.html"
+    return FileResponse(html_path)

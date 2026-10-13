@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Railway Water Monitoring</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #0b1220;
+            color: #e8eef8;
+        }
+
+        header {
+            padding: 22px 28px;
+            background: #111c30;
+            border-bottom: 1px solid #29364b;
+        }
+
+        header h1 {
+            margin: 0 0 8px;
+            font-size: 25px;
+        }
+
+        header p {
+            margin: 0;
+            color: #9eafc8;
+            font-size: 14px;
+        }
+
+        main {
+            max-width: 1400px;
+            margin: auto;
+            padding: 24px;
+        }
+
+        .section-title {
+            margin: 26px 0 14px;
+            font-size: 17px;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 16px;
+        }
+
+        .card {
+            background: #152238;
+            border: 1px solid #293b55;
+            border-radius: 12px;
+            padding: 20px;
+            min-height: 130px;
+        }
+
+        .label {
+            color: #9eafc8;
+            font-size: 13px;
+        }
+
+        .value {
+            margin-top: 14px;
+            font-size: 30px;
+            font-weight: bold;
+        }
+
+        .unit {
+            color: #9eafc8;
+            font-size: 14px;
+            font-weight: normal;
+        }
+
+        .status {
+            display: inline-block;
+            margin-top: 12px;
+            padding: 6px 10px;
+            border-radius: 20px;
+            background: #26384c;
+            color: #c5d5eb;
+            font-size: 12px;
+        }
+
+        .lower-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 16px;
+        }
+
+        .placeholder {
+            margin-top: 16px;
+            padding: 24px;
+            border: 1px dashed #43536d;
+            border-radius: 10px;
+            color: #9eafc8;
+            text-align: center;
+            min-height: 130px;
+        }
+
+        footer {
+            padding: 20px;
+            text-align: center;
+            color: #8293ad;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Railway Water Monitoring</h1>
+        <p>Industrial IoT · Train Tank Telemetry</p>
+    </header>
+
+    <main>
+        <h2 class="section-title">Train Overview</h2>
+        <section class="cards">
+            <div class="card">
+                <div class="label">Train ID</div>
+                <div class="value" style="font-size: 24px;">TRAIN_POSTGRES_TEST</div>
+                <span class="status">Test data</span>
+            </div>
+
+            <div class="card">
+                <div class="label">Water Level</div>
+                <div class="value">420 <span class="unit">mm</span></div>
+                <div class="label">Tank capacity height: 590 mm</div>
+            </div>
+
+            <div class="card">
+                <div class="label">Tank Level</div>
+                <div class="value">71.2 <span class="unit">%</span></div>
+                <span class="status">Sample reading</span>
+            </div>
+
+            <div class="card">
+                <div class="label">Last Update</div>
+                <div class="value" style="font-size: 21px;">Awaiting live data</div>
+                <span class="status">Demo mode</span>
+            </div>
+        </section>
+
+        <h2 class="section-title">Sensor Readings</h2>
+        <section class="cards">
+            <div class="card">
+                <div class="label">Loop Current</div>
+                <div class="value">7.40 <span class="unit">mA</span></div>
+            </div>
+
+            <div class="card">
+                <div class="label">Atmospheric Pressure</div>
+                <div class="value">1008.2 <span class="unit">hPa</span></div>
+            </div>
+
+            <div class="card">
+                <div class="label">Temperature</div>
+                <div class="value">28.1 <span class="unit">°C</span></div>
+            </div>
+        </section>
+
+        <h2 class="section-title">Train Location & Route</h2>
+        <section class="lower-grid">
+            <div class="card">
+                <div class="label">Latest Coordinates</div>
+                <div class="value" style="font-size: 20px;">28.6139, 77.2090</div>
+                <div class="label">Sample coordinates, New Delhi area</div>
+                <div class="placeholder">Interactive train map will be added next.</div>
+            </div>
+
+            <div class="card">
+                <div class="label">Next Railway Station</div>
+                <div class="value" style="font-size: 22px;">Not configured</div>
+                <div class="placeholder">Route and direction data are needed to determine the next station.</div>
+            </div>
+        </section>
+
+        <h2 class="section-title">Telemetry History</h2>
+        <section class="lower-grid">
+            <div class="card">
+                <div class="label">Water Level History</div>
+                <div class="placeholder">Historical chart will be connected to the API next.</div>
+            </div>
+
+            <div class="card">
+                <div class="label">Temperature History</div>
+                <div class="placeholder">Historical chart will be connected to the API next.</div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        Railway Water Monitoring System · Dashboard prototype
+    </footer>
+</body>
+</html>
