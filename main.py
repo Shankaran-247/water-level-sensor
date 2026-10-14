@@ -1,24 +1,21 @@
-from typing import Optional
-
-
-from fastapi import FastAPI
-from pydantic import BaseModel
 import os
 import sqlite3
-import psycopg
-from psycopg.rows import dict_row
-from fastapi.responses import FileResponse
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
+from typing import Optional
 
-app = FastAPI()
+import psycopg
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from psycopg.rows import dict_row
+from pydantic import BaseModel
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 SQLITE_DATABASE = "water_level.db"
+PH = "%s" if DATABASE_URL else "?"   # SQL placeholder
 
 
-# -----------------------------
-# Data received from train
-# -----------------------------
 class Telemetry(BaseModel):
     train_id: str
     timestamp: str
@@ -31,154 +28,116 @@ class Telemetry(BaseModel):
     temperature_c: float
 
 
-# -----------------------------
-# Database connection
-# -----------------------------
-def get_connection():
+@contextmanager
+def db():
     if DATABASE_URL:
-        return psycopg.connect(DATABASE_URL, row_factory=dict_row)
-
-    return sqlite3.connect(SQLITE_DATABASE)
-
-
-# -----------------------------
-# Create database/table
-# -----------------------------
-def init_database():
-    connection = get_connection()
-    cursor = connection.cursor()
-
-    cursor.execute("""
-    ALTER TABLE telemetry
-        ALTER COLUMN latitude DROP NOT NULL,
-        ALTER COLUMN longitude DROP NOT NULL
-        """)
-
-    if DATABASE_URL:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS telemetry (
-                id BIGSERIAL PRIMARY KEY,
-                train_id TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                latitude DOUBLE PRECISION,
-                longitude DOUBLE PRECISION,
-                level_mm DOUBLE PRECISION NOT NULL,
-                level_percent DOUBLE PRECISION NOT NULL,
-                loop_current_ma DOUBLE PRECISION NOT NULL,
-                pressure_hpa DOUBLE PRECISION NOT NULL,
-                temperature_c DOUBLE PRECISION NOT NULL
-            )
-        """)
+        conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
     else:
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS telemetry (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                train_id TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                latitude REAL,
-                longitude REAL,
-                level_mm REAL NOT NULL,
-                level_percent REAL NOT NULL,
-                loop_current_ma REAL NOT NULL,
-                pressure_hpa REAL NOT NULL,
-                temperature_c REAL NOT NULL
-            )
-        """)
-
-    connection.commit()
-    connection.close()
+        conn = sqlite3.connect(SQLITE_DATABASE)
+        conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
 
 
-@app.on_event("startup")
-def startup():
+def init_database():
+    with db() as conn:
+        cur = conn.cursor()
+        if DATABASE_URL:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS telemetry (
+                    id BIGSERIAL PRIMARY KEY,
+                    train_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    latitude DOUBLE PRECISION,
+                    longitude DOUBLE PRECISION,
+                    level_mm DOUBLE PRECISION NOT NULL,
+                    level_percent DOUBLE PRECISION NOT NULL,
+                    loop_current_ma DOUBLE PRECISION NOT NULL,
+                    pressure_hpa DOUBLE PRECISION NOT NULL,
+                    temperature_c DOUBLE PRECISION NOT NULL
+                )""")
+            # one-time migration for tables created with NOT NULL (safe to repeat)
+            cur.execute("ALTER TABLE telemetry ALTER COLUMN latitude DROP NOT NULL")
+            cur.execute("ALTER TABLE telemetry ALTER COLUMN longitude DROP NOT NULL")
+        else:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS telemetry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    train_id TEXT NOT NULL,
+                    timestamp TEXT NOT NULL,
+                    latitude REAL,
+                    longitude REAL,
+                    level_mm REAL NOT NULL,
+                    level_percent REAL NOT NULL,
+                    loop_current_ma REAL NOT NULL,
+                    pressure_hpa REAL NOT NULL,
+                    temperature_c REAL NOT NULL
+                )""")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_train ON telemetry (train_id, id)")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     init_database()
+    yield
 
 
-# -----------------------------
-# Home endpoint
-# -----------------------------
+app = FastAPI(lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 @app.get("/")
 def home():
     return {"message": "Water Level API is running"}
 
 
-# -----------------------------
-# Receive train telemetry
-# -----------------------------
 @app.post("/api/v1/telemetry")
 def receive_telemetry(data: Telemetry):
-    connection = get_connection()
-    cursor = connection.cursor()
-
-    placeholders = (
-        "%s, %s, %s, %s, %s, %s, %s, %s, %s"
-        if DATABASE_URL
-        else "?, ?, ?, ?, ?, ?, ?, ?, ?"
-    )
-
-    cursor.execute(f"""
-        INSERT INTO telemetry (
-            train_id, timestamp, latitude, longitude, level_mm,
-            level_percent, loop_current_ma, pressure_hpa, temperature_c
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""INSERT INTO telemetry (train_id, timestamp, latitude, longitude,
+                    level_mm, level_percent, loop_current_ma, pressure_hpa, temperature_c)
+                VALUES ({", ".join([PH] * 9)})
+                {"RETURNING id" if DATABASE_URL else ""}""",
+            (data.train_id, data.timestamp, data.latitude, data.longitude,
+             data.level_mm, data.level_percent, data.loop_current_ma,
+             data.pressure_hpa, data.temperature_c),
         )
-        VALUES ({placeholders})
-        {"RETURNING id" if DATABASE_URL else ""}
-    """, (
-        data.train_id,
-        data.timestamp,
-        data.latitude,
-        data.longitude,
-        data.level_mm,
-        data.level_percent,
-        data.loop_current_ma,
-        data.pressure_hpa,
-        data.temperature_c
-    ))
-
-    if DATABASE_URL:
-        record_id = cursor.fetchone()["id"]
-    else:
-        record_id = cursor.lastrowid
-
-    connection.commit()
-    connection.close()
-
-    return {
-        "status": "received",
-        "record_id": record_id,
-        "data": data
-    }
+        record_id = cur.fetchone()["id"] if DATABASE_URL else cur.lastrowid
+    return {"status": "received", "record_id": record_id, "data": data}
 
 
-# -----------------------------
-# Get all telemetry records
-# -----------------------------
 @app.get("/api/v1/telemetry")
-def get_telemetry():
-    connection = get_connection()
-    cursor = connection.cursor()
+def get_telemetry(
+    limit: int = Query(200, ge=1, le=1000),
+    train_id: Optional[str] = None,
+):
+    sql = """SELECT id, train_id, timestamp, latitude, longitude, level_mm,
+                    level_percent, loop_current_ma, pressure_hpa, temperature_c
+             FROM telemetry"""
+    params = []
+    if train_id:
+        sql += f" WHERE train_id = {PH}"
+        params.append(train_id)
+    sql += f" ORDER BY id DESC LIMIT {PH}"
+    params.append(limit)
 
-    cursor.execute("""
-        SELECT id, train_id, timestamp, latitude, longitude, level_mm,
-               level_percent, loop_current_ma, pressure_hpa, temperature_c
-        FROM telemetry
-        ORDER BY id DESC
-    """)
+    with db() as conn:
+        cur = conn.cursor()
+        cur.execute(sql, params)
+        return [dict(r) for r in cur.fetchall()]
 
-    records = cursor.fetchall()
-    connection.close()
-
-    if DATABASE_URL:
-        return records
-
-    return [dict(zip(
-        ["id", "train_id", "timestamp", "latitude", "longitude",
-         "level_mm", "level_percent", "loop_current_ma",
-         "pressure_hpa", "temperature_c"],
-        record
-    )) for record in records]
 
 @app.get("/dashboard", include_in_schema=False)
 def dashboard():
-    html_path = Path(__file__).parent / "dashboard" / "dashboard.html"
-    return FileResponse(html_path)
+    return FileResponse(Path(__file__).parent / "dashboard" / "dashboard.html")
