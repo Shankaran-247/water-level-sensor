@@ -1,4 +1,3 @@
-```python
 import os
 import sqlite3
 from contextlib import asynccontextmanager, contextmanager
@@ -362,4 +361,3 @@ def dashboard():
         / "dashboard"
         / "dashboard.html"
     )
-```
