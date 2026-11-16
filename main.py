@@ -1,3 +1,4 @@
+
 import os
 import sqlite3
 from contextlib import asynccontextmanager, contextmanager
@@ -31,9 +32,6 @@ class Telemetry(BaseModel):
     level_mm: float
     level_percent: float
     volume_litres: float
-
-    # Optional for compatibility with new and older firmware
-    loop_current_ma: Optional[float] = None
 
     pressure_hpa: Optional[float] = None
     temperature_c: Optional[float] = None
@@ -82,19 +80,25 @@ def init_database():
                     longitude DOUBLE PRECISION,
                     level_mm DOUBLE PRECISION NOT NULL,
                     level_percent DOUBLE PRECISION NOT NULL,
-                    volume_litres DOUBLE PRECISION NOT NULL,
-                    loop_current_ma DOUBLE PRECISION,
+                    volume_litres DOUBLE PRECISION,
                     pressure_hpa DOUBLE PRECISION,
                     temperature_c DOUBLE PRECISION
                 )
             """)
 
-            # Migrate existing PostgreSQL databases
+            # Add volume column if missing
             cur.execute("""
                 ALTER TABLE telemetry
                 ADD COLUMN IF NOT EXISTS volume_litres DOUBLE PRECISION
             """)
 
+            # Remove old loop current column
+            cur.execute("""
+                ALTER TABLE telemetry
+                DROP COLUMN IF EXISTS loop_current_ma
+            """)
+
+            # Ensure optional fields allow NULL
             cur.execute("""
                 ALTER TABLE telemetry
                 ALTER COLUMN latitude DROP NOT NULL
@@ -103,11 +107,6 @@ def init_database():
             cur.execute("""
                 ALTER TABLE telemetry
                 ALTER COLUMN longitude DROP NOT NULL
-            """)
-
-            cur.execute("""
-                ALTER TABLE telemetry
-                ALTER COLUMN loop_current_ma DROP NOT NULL
             """)
 
             cur.execute("""
@@ -133,39 +132,41 @@ def init_database():
                     level_mm REAL NOT NULL,
                     level_percent REAL NOT NULL,
                     volume_litres REAL,
-                    loop_current_ma REAL,
                     pressure_hpa REAL,
                     temperature_c REAL
                 )
             """)
 
-            # Check existing SQLite columns
+            # Read existing SQLite columns
             cur.execute("PRAGMA table_info(telemetry)")
             columns = {
                 row["name"]: row
                 for row in cur.fetchall()
             }
 
-            # Add volume_litres if missing
+            # Add volume column if missing
             if "volume_litres" not in columns:
                 cur.execute("""
                     ALTER TABLE telemetry
                     ADD COLUMN volume_litres REAL
                 """)
+                columns["volume_litres"] = True
 
-            # SQLite cannot directly DROP NOT NULL.
-            # Rebuild the table if old columns have NOT NULL constraints.
+            # Rebuild old table if loop_current_ma exists
+            # or old optional columns have NOT NULL constraints.
             nullable_columns = [
                 "latitude",
                 "longitude",
-                "loop_current_ma",
                 "pressure_hpa",
                 "temperature_c"
             ]
 
-            needs_rebuild = any(
-                columns.get(name, {}).get("notnull", 0)
-                for name in nullable_columns
+            needs_rebuild = (
+                "loop_current_ma" in columns
+                or any(
+                    columns.get(name, {}).get("notnull", 0)
+                    for name in nullable_columns
+                )
             )
 
             if needs_rebuild:
@@ -180,30 +181,39 @@ def init_database():
                         level_mm REAL NOT NULL,
                         level_percent REAL NOT NULL,
                         volume_litres REAL,
-                        loop_current_ma REAL,
                         pressure_hpa REAL,
                         temperature_c REAL
                     )
                 """)
 
-                cur.execute("""
-                    INSERT INTO telemetry_new (
-                        id, train_id, timestamp,
-                        latitude, longitude,
-                        level_mm, level_percent,
-                        volume_litres, loop_current_ma,
-                        pressure_hpa, temperature_c
-                    )
-                    SELECT
-                        id, train_id, timestamp,
-                        latitude, longitude,
-                        level_mm, level_percent,
-                        volume_litres, loop_current_ma,
-                        pressure_hpa, temperature_c
+                new_columns = [
+                    "id",
+                    "train_id",
+                    "timestamp",
+                    "latitude",
+                    "longitude",
+                    "level_mm",
+                    "level_percent",
+                    "volume_litres",
+                    "pressure_hpa",
+                    "temperature_c"
+                ]
+
+                existing_columns = [
+                    name for name in new_columns
+                    if name in columns
+                ]
+
+                column_list = ", ".join(existing_columns)
+
+                cur.execute(f"""
+                    INSERT INTO telemetry_new ({column_list})
+                    SELECT {column_list}
                     FROM telemetry
                 """)
 
                 cur.execute("DROP TABLE telemetry")
+
                 cur.execute("""
                     ALTER TABLE telemetry_new
                     RENAME TO telemetry
@@ -269,11 +279,10 @@ def receive_telemetry(data: Telemetry):
                 level_mm,
                 level_percent,
                 volume_litres,
-                loop_current_ma,
                 pressure_hpa,
                 temperature_c
             )
-            VALUES ({", ".join([PH] * 10)})
+            VALUES ({", ".join([PH] * 9)})
             {"RETURNING id" if DATABASE_URL else ""}
             """,
             (
@@ -284,7 +293,6 @@ def receive_telemetry(data: Telemetry):
                 data.level_mm,
                 data.level_percent,
                 data.volume_litres,
-                data.loop_current_ma,
                 data.pressure_hpa,
                 data.temperature_c
             )
@@ -324,7 +332,6 @@ def get_telemetry(
             level_mm,
             level_percent,
             volume_litres,
-            loop_current_ma,
             pressure_hpa,
             temperature_c
         FROM telemetry
